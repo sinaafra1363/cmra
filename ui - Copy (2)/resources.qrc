@@ -1,8 +1,0 @@
-<!DOCTYPE RCC><RCC version="1.0">
-<qresource prefix="/background">
-    <file>Images/Gemini_Generated_Image_1.png</file>
-</qresource>
-<qresource prefix="/logos">
-    <file>Images/logo.jpeg</file>
-</qresource>
-</RCC>
