@@ -1,0 +1,839 @@
+import sys
+import os
+import shutil
+import subprocess
+from PySide6.QtWidgets import (QApplication, QDialog, QGraphicsScene, QGraphicsPixmapItem,
+                               QGraphicsView, QGraphicsRectItem, QGraphicsDropShadowEffect,
+                               QGroupBox, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+                               QTableWidget, QTableWidgetItem, QHeaderView, QDockWidget,
+                               QListWidget, QPushButton, QLabel, QLineEdit,
+                               QMessageBox, QToolBar, QMenu, QMenuBar, QFrame, QAbstractItemView,
+                               QStatusBar, QCheckBox, QFileDialog, QListWidgetItem, QPlainTextEdit)
+from PySide6.QtGui import QPixmap, QResizeEvent, QColor, QAction, QIcon, QShowEvent
+from PySide6.QtCore import Qt, QRectF, QSize, QTimer, QDateTime
+
+# تلاش برای وارد کردن کلاس طراحی UI
+try:
+    from ui_sinamanager import Ui_LoginDialog
+except ImportError as e:
+    print(f"Error: Could not import Ui_LoginDialog. Please ensure ui_sinamanager.py is in the correct path and generated correctly. Details: {e}")
+    sys.exit(1)
+
+# --- کلاس BackupDialog برای پشتیبان‌گیری ---
+class BackupDialog(QDialog):
+    def __init__(self, projects, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("پشتیبان‌گیری پروژه‌ها")
+        self.setGeometry(200, 200, 600, 700)  # افزایش اندازه پنجره برای جدول
+        self.setStyleSheet(self.get_stylesheet())
+        
+        
+        main_layout = QVBoxLayout(self)
+
+        # بخش انتخاب پروژه‌ها به صورت جدول
+        project_groupbox = QGroupBox("انتخاب پروژه‌ها")
+        project_layout = QVBoxLayout(project_groupbox)
+        
+        self.project_table = QTableWidget()
+        self.project_table.setColumnCount(3)
+        self.project_table.setHorizontalHeaderLabels(["انتخاب", "ID", "نام پروژه"])
+        self.project_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.project_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.project_table.setAlternatingRowColors(True)
+
+        header = self.project_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents) # ستون انتخاب
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents) # ستون ID
+        header.setSectionResizeMode(2, QHeaderView.Stretch) # ستون نام پروژه
+
+        project_layout.addWidget(self.project_table)
+        main_layout.addWidget(project_groupbox)
+
+        # پر کردن جدول با پروژه‌ها
+        self.project_table.setRowCount(len(projects))
+        for row_index, project in enumerate(projects):
+            checkbox_item = QTableWidgetItem()
+            checkbox_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+            checkbox_item.setCheckState(Qt.Unchecked)
+            self.project_table.setItem(row_index, 0, checkbox_item)
+
+            id_item = QTableWidgetItem(project[0])
+            self.project_table.setItem(row_index, 1, id_item)
+            
+            name_item = QTableWidgetItem(project[1])
+            self.project_table.setItem(row_index, 2, name_item)
+            
+        # بخش نمایش پروژه‌های انتخاب‌شده
+        selected_projects_groupbox = QGroupBox("پروژه‌های انتخاب‌شده")
+        selected_projects_layout = QVBoxLayout(selected_projects_groupbox)
+        self.selected_projects_table = QTableWidget()
+        self.selected_projects_table.setColumnCount(2)
+        self.selected_projects_table.setHorizontalHeaderLabels(["ID", "نام پروژه"])
+        self.selected_projects_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.selected_projects_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.selected_projects_table.setAlternatingRowColors(True)
+        
+        header_selected = self.selected_projects_table.horizontalHeader()
+        header_selected.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header_selected.setSectionResizeMode(1, QHeaderView.Stretch)
+
+        selected_projects_layout.addWidget(self.selected_projects_table)
+        main_layout.addWidget(selected_projects_groupbox)
+
+        self.project_table.itemChanged.connect(self.update_selected_projects_display)
+        
+        # بخش انتخاب محل ذخیره
+        location_groupbox = QGroupBox("محل ذخیره و نام فایل")
+        location_layout = QVBoxLayout(location_groupbox)
+
+        path_layout = QHBoxLayout()
+        self.path_input = QLineEdit()
+        self.path_input.setPlaceholderText("محل ذخیره را انتخاب کنید...")
+        browse_button = QPushButton("انتخاب مسیر")
+        browse_button.clicked.connect(self.select_path)
+        path_layout.addWidget(self.path_input)
+        path_layout.addWidget(browse_button)
+        location_layout.addLayout(path_layout)
+        
+        main_layout.addWidget(location_groupbox)
+
+        # چک‌باکس فشرده‌سازی
+        self.compress_checkbox = QCheckBox("فشرده سازی")
+        main_layout.addWidget(self.compress_checkbox)
+
+        # بخش‌های قابل انتخاب
+        sections_groupbox = QGroupBox("بخش ها")
+        sections_layout = QVBoxLayout(sections_groupbox)
+        self.sections_list = QListWidget()
+        self.sections_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.sections_list.setAlternatingRowColors(True)
+        
+        section_items = ["مشخصات پیمان", "ریز متره", "خلاصه متره"]
+        for section in section_items:
+            item = QListWidgetItem(section)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+            item.setCheckState(Qt.Unchecked)
+            self.sections_list.addItem(item)
+            
+        sections_layout.addWidget(self.sections_list)
+        main_layout.addWidget(sections_groupbox)
+
+        # دکمه‌های تأیید و لغو
+        button_layout = QHBoxLayout()
+        self.ok_button = QPushButton("تأیید")
+        self.cancel_button = QPushButton("لغو")
+        
+        button_layout.addStretch()
+        button_layout.addWidget(self.ok_button)
+        button_layout.addWidget(self.cancel_button)
+        button_layout.addStretch()
+        
+        main_layout.addLayout(button_layout)
+
+        self.ok_button.clicked.connect(self.perform_backup)
+        self.cancel_button.clicked.connect(self.reject)
+        
+        self.selected_projects = []
+        self.selected_sections = []
+        self.save_path = ""
+        self.file_suffix = ""
+        self.is_compressed = False
+        
+    def update_selected_projects_display(self, item):
+        self.selected_projects_table.setRowCount(0)
+        checked_projects = []
+        for row in range(self.project_table.rowCount()):
+            checkbox_item = self.project_table.item(row, 0)
+            if checkbox_item and checkbox_item.checkState() == Qt.Checked:
+                project_id = self.project_table.item(row, 1).text()
+                project_name = self.project_table.item(row, 2).text()
+                checked_projects.append((project_id, project_name))
+        
+        self.selected_projects_table.setRowCount(len(checked_projects))
+        for row_index, project in enumerate(checked_projects):
+            id_item = QTableWidgetItem(project[0])
+            name_item = QTableWidgetItem(project[1])
+            self.selected_projects_table.setItem(row_index, 0, id_item)
+            self.selected_projects_table.setItem(row_index, 1, name_item)
+    
+    def select_path(self):
+        directory = QFileDialog.getExistingDirectory(self, "انتخاب محل ذخیره", os.path.expanduser("~"))
+        if directory:
+            self.path_input.setText(directory)
+            self.save_path = directory
+    
+    def perform_backup(self):
+        self.selected_projects = []
+        for row in range(self.project_table.rowCount()):
+            checkbox_item = self.project_table.item(row, 0)
+            if checkbox_item and checkbox_item.checkState() == Qt.Checked:
+                project_name = self.project_table.item(row, 2).text()
+                self.selected_projects.append(project_name)
+
+        self.selected_sections = []
+        for i in range(self.sections_list.count()):
+            item = self.sections_list.item(i)
+            if item.checkState() == Qt.Checked:
+                self.selected_sections.append(item.text())
+        
+        self.save_path = self.path_input.text()
+        self.is_compressed = self.compress_checkbox.isChecked()
+        
+        self.file_suffix = ".cmra"
+        
+        if not self.selected_projects:
+            QMessageBox.warning(self, "خطا", "لطفاً حداقل یک پروژه را انتخاب کنید.")
+            return
+        
+        if not self.save_path:
+            QMessageBox.warning(self, "خطا", "لطفاً محل ذخیره را مشخص کنید.")
+            return
+
+        try:
+            if self.is_compressed:
+                project_names = self.selected_projects
+                
+                try:
+                    subprocess.run(['rar', '-v'], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except FileNotFoundError:
+                    QMessageBox.critical(self, "خطا", "نرم‌افزار RAR در سیستم شما یافت نشد. لطفاً آن را نصب کرده و به PATH سیستم اضافه کنید.")
+                    return
+                
+                file_name = f"backup{self.file_suffix}"
+                output_file = os.path.join(self.save_path, file_name)
+                
+                source_paths = [os.path.join("D:\\Projects", p) for p in project_names] 
+                
+                command = ['rar', 'a', output_file] + source_paths
+                
+                result = subprocess.run(command, capture_output=True, text=True, check=True)
+                
+                QMessageBox.information(self, "پشتیبان‌گیری موفق", f"عملیات فشرده‌سازی با موفقیت انجام شد:\n{result.stdout}")
+                
+            else:
+                for project in self.selected_projects:
+                    pass
+                QMessageBox.information(self, "پشتیبان‌گیری موفق", "پشتیبان‌گیری بدون فشرده‌سازی انجام شد.")
+
+            self.accept()
+        except subprocess.CalledProcessError as e:
+            QMessageBox.critical(self, "خطا در فشرده‌سازی", f"خطا در اجرای دستور RAR:\n{e.stderr}")
+        except Exception as e:
+            QMessageBox.critical(self, "خطای نامشخص", f"یک خطای نامشخص رخ داد: {e}")
+
+    def get_stylesheet(self):
+        return """
+            QDialog {
+                background-color: #f0f0f0;
+            }
+            QGroupBox {
+                border: 1px solid #c0c0c0;
+                border-radius: 5px;
+                margin-top: 10px;
+                font-weight: bold;
+                background-color: #ffffff;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top center;
+                padding: 0 5px;
+            }
+            QTableWidget {
+                border: 1px solid #d0d0d0;
+                background-color: #ffffff;
+                gridline-color: #c0c0c0;
+            }
+            QTableWidget::item:alternate {
+                background-color: #f2f2f2;
+            }
+            QTableWidget::item:selected {
+                background-color: #a0c4ff;
+                color: black;
+            }
+            QHeaderView::section {
+                background-color: #d8e0c9;
+                padding: 5px;
+                border: 1px solid #c0c0c0;
+                font-weight: bold;
+            }
+            QLineEdit {
+                border: 1px solid #d0d0d0;
+                padding: 5px;
+            }
+            QLineEdit::selection {
+                color: black;
+                background-color: #a0c4ff;
+            }
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                border: 1px solid #4CAF50;
+                padding: 8px 16px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+            QPlainTextEdit {
+                background-color: #ffffff;
+                border: 1px solid #d0d0d0;
+            }
+            QPlainTextEdit::selection {
+                background-color: #a0c4ff;
+                color: black;
+            }
+            QListWidget {
+                background-color: #ffffff;
+                border: 1px solid #d0d0d0;
+            }
+            
+            /* قوانین کلیدی برای نمایش صحیح متن و نشانگر چک‌باکس */
+            QListWidget::item {
+                background-color: #ffffff;
+                color: black;
+            }
+            
+            QListWidget::item:selected {
+                background-color: #a0c4ff;
+                color: black;
+            }
+            
+            QListWidget::indicator {
+                width: 15px;
+                height: 15px;
+                border-radius: 2px;
+            }
+            
+            QListWidget::indicator:checked {
+                background-color: #4CAF50; /* رنگ سبز برای چک‌باکس‌های انتخاب شده */
+                border: 1px solid #45a049;
+            }
+            
+            QListWidget::indicator:unchecked {
+                background-color: #ffffff;
+                border: 1px solid #c0c0c0;
+            }
+            
+            QTableWidget::indicator {
+                width: 15px;
+                height: 15px;
+                border-radius: 2px;
+            }
+            
+            QTableWidget::indicator:checked {
+                background-color: #4CAF50; /* رنگ سبز برای چک‌باکس‌های انتخاب شده */
+                border: 1px solid #45a049;
+            }
+            
+            QTableWidget::indicator:unchecked {
+                background-color: #ffffff;
+                border: 1px solid #c0c0c0;
+            }
+        """
+# --- کلاس داشبورد اصلاح شده بر اساس طرح بصری شما ---
+class Dashboard(QMainWindow):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Sina Manager Dashboard")
+        self.setGeometry(100, 100, 1200, 800)
+        self.setStyleSheet(self.get_stylesheet())
+
+        menubar = self.menuBar()
+        file_menu = menubar.addMenu("پرونده")
+        edit_menu = menubar.addMenu("ویرایش")
+        view_menu = menubar.addMenu("مشاهده")
+        help_menu = menubar.addMenu("راهنما")
+        
+        toolbar = QToolBar("ابزار اصلی")
+        self.addToolBar(toolbar)
+        toolbar.setStyleSheet("QToolBar { background: #f0f0f0; border-bottom: 1px solid #c0c0c0; }")
+        
+        self.backup_action = QAction(QIcon("Images/Recovery.png"), "پشتیبان", self)
+        self.restore_action = QAction(QIcon("Images/Restore.png"), "بازیابی", self)
+        
+        self.backup_action.triggered.connect(self.backup_data)
+        self.restore_action.triggered.connect(self.restore_data)
+        
+        toolbar.addAction(self.backup_action)
+        toolbar.addAction(self.restore_action)
+
+        self.version_action = QAction(QIcon("Images/Version.png"), "نسخه", self)
+        self.copy_action = QAction(QIcon("Images/Copy.png"), "کپی", self)
+        self.remote_action = QAction(QIcon("Images/Remote.png"), "ریموت", self)
+        self.print_action = QAction(QIcon("Images/Printer.png"), "چاپ", self)
+
+        self.version_action.triggered.connect(self.show_version)
+        self.copy_action.triggered.connect(self.copy_content)
+        self.remote_action.triggered.connect(self.start_remote)
+        self.print_action.triggered.connect(self.print_document)
+
+        toolbar.addAction(self.version_action)
+        toolbar.addAction(self.copy_action)
+        toolbar.addAction(self.remote_action)
+        toolbar.addAction(self.print_action)
+
+        self.addToolBarBreak()
+        
+        toolbar2 = QToolBar("ابزار عملیات")
+        self.addToolBar(toolbar2)
+        toolbar2.setStyleSheet("QToolBar { background: #f0f0f0; border-bottom: 1px solid #c0c0c0; }")
+        
+        self.new_action = QAction(QIcon("Images/Add.png"), "جدید", self)
+        self.delete_action = QAction(QIcon("Images/Delete.png"), "حذف", self)
+        
+        self.new_action.triggered.connect(self.new_item)
+        self.delete_action.triggered.connect(self.delete_item)
+
+        toolbar2.addAction(self.new_action)
+        toolbar2.addAction(self.delete_action)
+
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        
+        main_layout = QVBoxLayout(central_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.table = QTableWidget()
+        self.table.setColumnCount(7)
+        self.table.setHorizontalHeaderLabels(["ID", "نام پروژه", "نام سازنده یا پیمانکار", "شماره پیمان", "مبنا", "ایجاد کننده", "تاریخ"])
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.Stretch)
+        self.table.setSortingEnabled(True)
+        self.table.doubleClicked.connect(self.on_table_double_clicked)
+        
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setAlternatingRowColors(True)
+
+        main_layout.addWidget(self.table)
+        
+        self.statusBar = QStatusBar()
+        self.setStatusBar(self.statusBar)
+        self.statusBar.setStyleSheet("QStatusBar { background-color: #d8e0c9; color: #555555; }")
+        
+        open_button = QPushButton("باز کردن پروژه")
+        open_icon_path = os.path.join("Images", "Open folder.png")
+        if os.path.exists(open_icon_path):
+            open_button.setIcon(QIcon(open_icon_path))
+            open_button.setIconSize(QSize(24, 24))
+        open_button.clicked.connect(self.open_project)
+        
+        close_button = QPushButton("بستن برنامه")
+        close_icon_path = os.path.join("Images", "Exit.png")
+        if os.path.exists(close_icon_path):
+            close_button.setIcon(QIcon(close_icon_path))
+            close_button.setIconSize(QSize(24, 24))
+        close_button.clicked.connect(QApplication.quit)
+        
+        button_widget = QWidget()
+        button_layout = QHBoxLayout(button_widget)
+        button_layout.setContentsMargins(0, 0, 0, 0)
+        button_layout.addWidget(open_button)
+        button_layout.addWidget(close_button)
+
+        self.new_window_checkbox = QCheckBox("در پنجره جدید")
+        full_tree_label = QLabel("درخت کامل پروژه ها")
+        
+        options_widget = QWidget()
+        options_layout = QHBoxLayout(options_widget)
+        options_layout.setContentsMargins(0, 0, 0, 0)
+        options_layout.addWidget(self.new_window_checkbox)
+        options_layout.addWidget(QLabel("|"))
+        options_layout.addWidget(full_tree_label)
+        
+        database_widget = QWidget()
+        database_layout = QHBoxLayout(database_widget)
+        database_layout.setContentsMargins(0, 0, 0, 0)
+        database_layout.setSpacing(5)
+
+        sql_icon_label = QLabel()
+        sql_icon = QPixmap(os.path.join("Images", "Database.png")).scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        sql_icon_label.setPixmap(sql_icon)
+        
+        sql_name_label = QLabel("sinadb.mdf")
+        sql_name_label.setToolTip("نام دیتابیس متصل")
+
+        database_layout.addWidget(sql_icon_label)
+        database_layout.addWidget(sql_name_label)
+        
+        self.project_count_label = QLabel()
+        self.version_label = QLabel("ورژن: 1.0")
+
+        self.statusBar.addPermanentWidget(button_widget)
+        self.statusBar.addPermanentWidget(QLabel("|"))
+        self.statusBar.addPermanentWidget(options_widget)
+        self.statusBar.addPermanentWidget(QLabel("|"))
+        self.statusBar.addPermanentWidget(database_widget)
+        self.statusBar.addPermanentWidget(QLabel("|"))
+        self.statusBar.addPermanentWidget(self.project_count_label)
+        self.statusBar.addPermanentWidget(QLabel("|"))
+        self.statusBar.addPermanentWidget(self.version_label)
+        
+        self.populate_table()
+    
+    def open_project(self):
+        selected_rows = self.table.selectionModel().selectedRows()
+        if not selected_rows:
+            QMessageBox.warning(self, "خطا", "لطفاً یک پروژه را انتخاب کنید.")
+            return
+
+        row_index = selected_rows[0].row()
+        project_name = self.table.item(row_index, 1).text()
+        
+        if self.new_window_checkbox.isChecked():
+            QMessageBox.information(self, "باز کردن پروژه", f"پروژه '{project_name}' در یک پنجره جدید باز می‌شود.")
+        else:
+            QMessageBox.information(self, "باز کردن پروژه", f"پروژه '{project_name}' در همین پنجره باز می‌شود.")
+
+    def on_table_double_clicked(self, index):
+        self.open_project()
+    
+    def update_project_count_label(self):
+        count = self.table.rowCount()
+        self.project_count_label.setText(f"تعداد پروژه‌ها: {count}")
+        
+    def populate_table(self, data=None):
+        if data is None:
+            data = [
+                ["1", "پروژه A", "پیمانکار الف", "12345", "مبنای اول", "کاربر ۱", "1402/05/20"],
+                ["2", "پروژه B", "پیمانکار ب", "23456", "مبنای دوم", "کاربر ۲", "1402/05/21"],
+                ["3", "پروژه C", "پیمانکار ج", "34567", "مبنای سوم", "کاربر ۳", "1402/05/22"],
+            ]
+        
+        self.table.setRowCount(len(data))
+        for row_index, row_data in enumerate(data):
+            for col_index, cell_data in enumerate(row_data):
+                item = QTableWidgetItem(cell_data)
+                item.setTextAlignment(Qt.AlignCenter)
+                self.table.setItem(row_index, col_index, item)
+        self.update_project_count_label()
+
+    def apply_filter(self):
+        project_name = self.project_name_input.text()
+        date = self.date_input.text()
+        
+        print(f"Filter button clicked! Project Name: '{project_name}', Date: '{date}'")
+        
+    def backup_data(self):
+        projects = []
+        for row in range(self.table.rowCount()):
+            project_id = self.table.item(row, 0).text()
+            project_name = self.table.item(row, 1).text()
+            projects.append((project_id, project_name))
+
+        backup_dialog = BackupDialog(projects, self)
+        
+        if backup_dialog.exec() == QDialog.Accepted:
+            pass
+
+    def restore_data(self):
+        QMessageBox.information(self, "بازیابی", "عملیات بازیابی در حال انجام است...")
+        print("Restore button clicked!")
+
+    def show_version(self):
+        QMessageBox.information(self, "نسخه", "نسخه نرم‌افزار: 1.0")
+        print("Version button clicked!")
+
+    def copy_content(self):
+        QMessageBox.information(self, "کپی", "محتوای انتخاب شده کپی شد.")
+        print("Copy button clicked!")
+
+    def start_remote(self):
+        QMessageBox.information(self, "ریموت", "ارتباط از راه دور در حال برقرار شدن است...")
+        print("Remote button clicked!")
+
+    def print_document(self):
+        QMessageBox.information(self, "چاپ", "سند در حال آماده‌سازی برای چاپ است...")
+        print("Print button clicked!")
+
+    def new_item(self):
+        row_count = self.table.rowCount()
+        self.table.insertRow(row_count)
+        
+        current_date = QDateTime.currentDateTime().toString("yyyy/MM/dd")
+        
+        new_row_data = [
+            str(row_count + 1),
+            "پروژه جدید",
+            "نام پیمانکار",
+            "شماره پیمان",
+            "مبنا",
+            "نام ایجاد کننده",
+            current_date
+        ]
+        
+        for col_index, cell_data in enumerate(new_row_data):
+            item = QTableWidgetItem(cell_data)
+            item.setTextAlignment(Qt.AlignCenter)
+            self.table.setItem(row_count, col_index, item)
+        
+        QMessageBox.information(self, "جدید", "یک ردیف جدید به جدول اضافه شد.")
+        self.update_project_count_label()
+        
+    def delete_item(self):
+        selected_rows = sorted(list(set(index.row() for index in self.table.selectedIndexes())))
+        
+        if not selected_rows:
+            QMessageBox.warning(self, "حذف", "هیچ ردیفی برای حذف انتخاب نشده است.")
+            return
+
+        reply = QMessageBox.question(self, "تأیید حذف",
+                                    "آیا مطمئن هستید که می‌خواهید ردیف‌های انتخاب شده را حذف کنید؟",
+                                    QMessageBox.Yes | QMessageBox.No)
+        
+        if reply == QMessageBox.Yes:
+            for row in reversed(selected_rows):
+                self.table.removeRow(row)
+            QMessageBox.information(self, "حذف", f"{len(selected_rows)} ردیف با موفقیت حذف شد.")
+        
+    def get_stylesheet(self):
+        return """
+            QMainWindow {
+                background-color: #f0f0f0;
+            }
+            QDockWidget {
+                border: 1px solid #c0c0c0;
+                background-color: #ffffff;
+            }
+            QDockWidget::title {
+                text-align: center;
+                background: #e0e0e0;
+                padding: 5px;
+            }
+            QTableWidget {
+                background-color: #ffffff;
+                border: 1px solid #c0c0c0;
+                gridline-color: #d0d0d0;
+            }
+            QTableWidget::item:alternate {
+                background-color: #f2f2f2;
+            }
+            QTableWidget::item:selected {
+                background-color: #a0c4ff;
+                color: black;
+            }
+            QHeaderView::section {
+                background-color: #d8e0c9;
+                padding: 5px;
+                border: 1px solid #c0c0c0;
+                font-weight: bold;
+            }
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                border: 1px solid #4CAF50;
+                padding: 8px 16px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+            QFrame {
+                background-color: #d8e0c9;
+            }
+            QCheckBox {
+                spacing: 5px;
+            }
+            QCheckBox::indicator {
+                width: 20px;
+                height: 20px;
+            }
+            QLabel {
+                font-weight: bold;
+                color: #555555;
+            }
+            QStatusBar {
+                background-color: #d8e0c9;
+                color: #555555;
+            }
+            QStatusBar::item {
+                border: none;
+            }
+        """
+
+# --- تابع برای خواندن نام کاربری از قفل سخت‌افزاری (کد نمونه) ---
+def get_username_from_hardware_lock():
+    return "کامنرسا"
+
+# --- کلاس اصلی صفحه ورود با اعتبارسنجی ---
+class LoginDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.ui = Ui_LoginDialog()
+        self.ui.setupUi(self)
+        self.dashboard_window = None
+
+        self.ui.pushButtonConfirm.clicked.connect(self.show_dashboard)
+        self.ui.pushButtonCancel.clicked.connect(self.close)
+        
+        try:
+            self.username_input = self.ui.lineEdit 
+            self.password_input = self.ui.lineEdit_2
+            username = get_username_from_hardware_lock()
+            self.username_input.setText(username)
+
+        except AttributeError as e:
+            print(f"Error: Could not find username or password input fields. Please check ui_sinamanager.py. Details: {e}")
+            self.username_input = QLineEdit()
+            self.password_input = QLineEdit()
+        
+        self.background_pixmap = QPixmap()
+        self.background_item = None
+        self.overlay_rect = None
+        
+        try:
+            logo_path = os.path.join("Images", "logo.jpeg")
+            if os.path.exists(logo_path):
+                pixmap_logo = QPixmap(logo_path)
+                self.ui.labelLogo.setPixmap(pixmap_logo)
+                self.ui.labelLogo.setScaledContents(True)
+                
+            image_path = os.path.join("Images", "Gemini_Generated_Image_1.png")
+            
+            if os.path.exists(image_path):
+                self.background_pixmap = QPixmap(image_path)
+                
+                self.scene = QGraphicsScene(self.ui.graphicsViewBackground)
+                self.ui.graphicsViewBackground.setScene(self.scene)
+                
+                self.background_item = QGraphicsPixmapItem(self.background_pixmap)
+                self.scene.addItem(self.background_item)
+
+                self.overlay_rect = QGraphicsRectItem()
+                self.overlay_rect.setBrush(QColor(0, 0, 0, 100)) 
+                self.scene.addItem(self.overlay_rect)
+            else:
+                self.ui.graphicsViewBackground.setStyleSheet("background-color: #f0f0f0;")
+                
+        except Exception as e:
+            print(f"Error loading background or logo. Details: {e}")
+            self.ui.graphicsViewBackground.setStyleSheet("background-color: #f0f0f0;")
+
+        style_sheet = """
+            QGroupBox {
+                background-color: transparent; 
+                border: 2px solid white; 
+                border-radius: 8px;
+                font-size: 16px;
+                color: white; 
+            }
+            QLabel {
+                color: white; 
+                font-weight: bold;
+            }
+            QLineEdit {
+                background-color: transparent; 
+                border: 1px solid white; 
+                border-radius: 5px;
+                padding: 5px;
+                color: white; 
+            }
+            QLineEdit::selection {
+                color: black;
+                background-color: white;
+            }
+            QPushButton {
+                background-color: transparent; 
+                color: white; 
+                border: 1px solid white; 
+                border-radius: 5px;
+                padding: 5px 10px; 
+                min-height: 25px; 
+                font-size: 14px; 
+            }
+            QPushButton:hover {
+                background-color: rgba(255, 255, 255, 50); 
+                border: 1px solid white; 
+            }
+            QLabel#labelSoftwareName {
+                color: orange;
+                font-size: 36px;
+            }
+            QLabel#labelSoftwareDescription {
+                color: #ffaa7f;
+                font-size: 18px;
+            }
+            QLabel#labelCompanyInfo {
+                color: orange;
+            }
+            QLabel#labelLocation {
+                color: white;
+            }
+        """
+        self.setStyleSheet(style_sheet)
+
+        labels_with_shadow = ['labelSoftwareName', 'labelSoftwareDescription', 'labelCompanyInfo', 'labelLocation']
+        for label_name in labels_with_shadow:
+            if hasattr(self.ui, label_name):
+                label = getattr(self.ui, label_name)
+                shadow = QGraphicsDropShadowEffect(label)
+                shadow.setBlurRadius(20)
+                shadow.setColor(QColor(0, 0, 0, 200))
+                shadow.setOffset(5, 5)
+                label.setGraphicsEffect(shadow)
+
+        self.ui.graphicsViewBackground.lower()
+        if hasattr(self.ui, 'groupBox'):
+            self.ui.groupBox.raise_()
+        if hasattr(self.ui, 'labelLogo'):
+            self.ui.labelLogo.raise_()
+        if hasattr(self.ui, 'labelSoftwareName'):
+            self.ui.labelSoftwareName.raise_()
+        if hasattr(self.ui, 'labelSoftwareDescription'):
+            self.ui.labelSoftwareDescription.raise_()
+        if hasattr(self.ui, 'labelCompanyInfo'):
+            self.ui.labelCompanyInfo.raise_()
+        if hasattr(self.ui, 'labelLocation'):
+            self.ui.labelLocation.raise_()
+    
+    def show_dashboard(self):
+        username = self.username_input.text().strip()
+        password = self.password_input.text().strip()
+        
+        if username == "کامنرسا" and password == "31180":
+            if self.dashboard_window is None:
+                self.dashboard_window = Dashboard()
+            
+            self.hide()
+            self.dashboard_window.show()
+        else:
+            QMessageBox.warning(self, "خطای ورود", "نام کاربری یا رمز عبور اشتباه است.")
+    
+    def update_background_image(self):
+        print("Updating background image size...")
+        if self.background_pixmap.isNull() or not self.background_item:
+            print("Background pixmap or item is not valid.")
+            return
+
+        view_size = self.ui.graphicsViewBackground.size()
+        if view_size.isEmpty():
+            print("Graphics view size is empty.")
+            return
+
+        self.scene.setSceneRect(self.scene.itemsBoundingRect())
+        self.ui.graphicsViewBackground.fitInView(self.background_item, Qt.KeepAspectRatioByExpanding)
+
+        if self.overlay_rect:
+            self.overlay_rect.setRect(self.scene.sceneRect())
+
+        print("Background updated successfully.")
+
+    def resizeEvent(self, event: QResizeEvent):
+        super().resizeEvent(event)
+        self.update_background_image()
+
+    def showEvent(self, event: QShowEvent):
+        super().showEvent(event)
+        QTimer.singleShot(10, self.update_background_image)
+        self.password_input.setFocus()
+    
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    
+    app.setLayoutDirection(Qt.RightToLeft)
+    
+    try:
+        dialog = LoginDialog()
+        dialog.show()
+        sys.exit(app.exec())
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
