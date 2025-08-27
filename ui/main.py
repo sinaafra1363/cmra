@@ -19,15 +19,15 @@ except ImportError as e:
     print(f"Error: Could not import Ui_LoginDialog. Please ensure ui_sinamanager.py is in the correct path and generated correctly. Details: {e}")
     sys.exit(1)
 
-# --- کلاس BackupDialog برای پشتیبان‌گیری ---
+# --- کلاس BackupDialog برای پشتیبان‌گیری (نسخه اصلاح‌شده) ---
 class BackupDialog(QDialog):
     def __init__(self, projects, parent=None):
         super().__init__(parent)
         self.setWindowTitle("پشتیبان‌گیری پروژه‌ها")
-        self.setGeometry(200, 200, 600, 700)  # افزایش اندازه پنجره برای جدول
+        self.setGeometry(200, 200, 600, 700)
+        self.setFixedSize(600, 700)
         self.setStyleSheet(self.get_stylesheet())
-        
-        
+    
         main_layout = QVBoxLayout(self)
 
         # بخش انتخاب پروژه‌ها به صورت جدول
@@ -42,9 +42,9 @@ class BackupDialog(QDialog):
         self.project_table.setAlternatingRowColors(True)
 
         header = self.project_table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeToContents) # ستون انتخاب
-        header.setSectionResizeMode(1, QHeaderView.ResizeToContents) # ستون ID
-        header.setSectionResizeMode(2, QHeaderView.Stretch) # ستون نام پروژه
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.Stretch)
 
         project_layout.addWidget(self.project_table)
         main_layout.addWidget(project_groupbox)
@@ -52,17 +52,30 @@ class BackupDialog(QDialog):
         # پر کردن جدول با پروژه‌ها
         self.project_table.setRowCount(len(projects))
         for row_index, project in enumerate(projects):
-            checkbox_item = QTableWidgetItem()
-            checkbox_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
-            checkbox_item.setCheckState(Qt.Unchecked)
-            self.project_table.setItem(row_index, 0, checkbox_item)
+            # ایجاد یک ویجت برای نگهداری و تراز کردن چک‌باکس
+            checkbox_widget = QWidget()
+            checkbox_layout = QHBoxLayout(checkbox_widget)
+            checkbox = QCheckBox()
+            
+            checkbox_layout.addWidget(checkbox)
+            checkbox_layout.setAlignment(Qt.AlignCenter)
+            checkbox_layout.setContentsMargins(0, 0, 0, 0)
+            
+            # قرار دادن ویجت در سلول جدول
+            self.project_table.setCellWidget(row_index, 0, checkbox_widget)
 
+            # تنظیم آیتم‌های دیگر جدول با تراز وسط
             id_item = QTableWidgetItem(project[0])
+            id_item.setTextAlignment(Qt.AlignCenter)
             self.project_table.setItem(row_index, 1, id_item)
             
             name_item = QTableWidgetItem(project[1])
+            name_item.setTextAlignment(Qt.AlignCenter)
             self.project_table.setItem(row_index, 2, name_item)
             
+            # اتصال سیگنال تغییر وضعیت چک‌باکس به تابع به‌روزرسانی
+            checkbox.stateChanged.connect(self.update_selected_projects_display)
+
         # بخش نمایش پروژه‌های انتخاب‌شده
         selected_projects_groupbox = QGroupBox("پروژه‌های انتخاب‌شده")
         selected_projects_layout = QVBoxLayout(selected_projects_groupbox)
@@ -72,23 +85,21 @@ class BackupDialog(QDialog):
         self.selected_projects_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.selected_projects_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.selected_projects_table.setAlternatingRowColors(True)
-        
-        header_selected = self.selected_projects_table.horizontalHeader()
-        header_selected.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        header_selected.setSectionResizeMode(1, QHeaderView.Stretch)
 
+        selected_header = self.selected_projects_table.horizontalHeader()
+        selected_header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        selected_header.setSectionResizeMode(1, QHeaderView.Stretch)
+        
         selected_projects_layout.addWidget(self.selected_projects_table)
         main_layout.addWidget(selected_projects_groupbox)
-
-        self.project_table.itemChanged.connect(self.update_selected_projects_display)
-        
+    
         # بخش انتخاب محل ذخیره
         location_groupbox = QGroupBox("محل ذخیره و نام فایل")
         location_layout = QVBoxLayout(location_groupbox)
 
         path_layout = QHBoxLayout()
         self.path_input = QLineEdit()
-        self.path_input.setPlaceholderText("محل ذخیره را انتخاب کنید...")
+        self.path_input.setPlaceholderText("مسیر و نام فایل پشتیبان را انتخاب کنید...")
         browse_button = QPushButton("انتخاب مسیر")
         browse_button.clicked.connect(self.select_path)
         path_layout.addWidget(self.path_input)
@@ -139,36 +150,53 @@ class BackupDialog(QDialog):
         self.file_suffix = ""
         self.is_compressed = False
         
-    def update_selected_projects_display(self, item):
+    def update_selected_projects_display(self):
         self.selected_projects_table.setRowCount(0)
         checked_projects = []
         for row in range(self.project_table.rowCount()):
-            checkbox_item = self.project_table.item(row, 0)
-            if checkbox_item and checkbox_item.checkState() == Qt.Checked:
-                project_id = self.project_table.item(row, 1).text()
-                project_name = self.project_table.item(row, 2).text()
-                checked_projects.append((project_id, project_name))
+            checkbox_widget = self.project_table.cellWidget(row, 0)
+            if checkbox_widget:
+                checkbox = checkbox_widget.findChild(QCheckBox)
+                if checkbox and checkbox.isChecked():
+                    project_id = self.project_table.item(row, 1).text()
+                    project_name = self.project_table.item(row, 2).text()
+                    checked_projects.append((project_id, project_name))
         
         self.selected_projects_table.setRowCount(len(checked_projects))
         for row_index, project in enumerate(checked_projects):
             id_item = QTableWidgetItem(project[0])
+            id_item.setTextAlignment(Qt.AlignCenter)
             name_item = QTableWidgetItem(project[1])
+            name_item.setTextAlignment(Qt.AlignCenter)
             self.selected_projects_table.setItem(row_index, 0, id_item)
             self.selected_projects_table.setItem(row_index, 1, name_item)
     
     def select_path(self):
-        directory = QFileDialog.getExistingDirectory(self, "انتخاب محل ذخیره", os.path.expanduser("~"))
-        if directory:
-            self.path_input.setText(directory)
-            self.save_path = directory
+        default_filename = os.path.join(os.path.expanduser("~"), "backup.cmra")
+        
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, 
+            "ذخیره فایل پشتیبان",
+            default_filename,
+            "(*.cmra);;All Files (*)"
+        )
+        
+        if file_path:
+            if not file_path.lower().endswith('.cmra'):
+                file_path += '.cmra'
+            
+            self.path_input.setText(file_path)
+            self.save_path = file_path
     
     def perform_backup(self):
         self.selected_projects = []
         for row in range(self.project_table.rowCount()):
-            checkbox_item = self.project_table.item(row, 0)
-            if checkbox_item and checkbox_item.checkState() == Qt.Checked:
-                project_name = self.project_table.item(row, 2).text()
-                self.selected_projects.append(project_name)
+            checkbox_widget = self.project_table.cellWidget(row, 0)
+            if checkbox_widget:
+                checkbox = checkbox_widget.findChild(QCheckBox)
+                if checkbox and checkbox.isChecked():
+                    project_name = self.project_table.item(row, 2).text()
+                    self.selected_projects.append(project_name)
 
         self.selected_sections = []
         for i in range(self.sections_list.count()):
@@ -178,9 +206,7 @@ class BackupDialog(QDialog):
         
         self.save_path = self.path_input.text()
         self.is_compressed = self.compress_checkbox.isChecked()
-        
-        self.file_suffix = ".cmra"
-        
+
         if not self.selected_projects:
             QMessageBox.warning(self, "خطا", "لطفاً حداقل یک پروژه را انتخاب کنید.")
             return
@@ -199,8 +225,7 @@ class BackupDialog(QDialog):
                     QMessageBox.critical(self, "خطا", "نرم‌افزار RAR در سیستم شما یافت نشد. لطفاً آن را نصب کرده و به PATH سیستم اضافه کنید.")
                     return
                 
-                file_name = f"backup{self.file_suffix}"
-                output_file = os.path.join(self.save_path, file_name)
+                output_file = self.save_path
                 
                 source_paths = [os.path.join("D:\\Projects", p) for p in project_names] 
                 
@@ -796,8 +821,32 @@ class LoginDialog(QDialog):
             self.hide()
             self.dashboard_window.show()
         else:
-            QMessageBox.warning(self, "خطای ورود", "نام کاربری یا رمز عبور اشتباه است.")
-    
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("خطای ورود")
+            msg_box.setIcon(QMessageBox.Warning)
+            msg_box.setText("نام کاربری یا رمز عبور اشتباه است.")
+            
+            # اعمال استایل‌شیت برای تغییر رنگ متن به مشکی، شامل دکمه‌ها
+            msg_box.setStyleSheet("""
+                QMessageBox { 
+                    background-color: #f0f0f0; /* رنگ پس‌زمینه خود MessageBox */
+                } 
+                QMessageBox QLabel { 
+                    color: black; /* رنگ متن پیام */
+                } 
+                QMessageBox QPushButton { 
+                    color: black; /* رنگ متن دکمه‌ها */
+                    background-color: #d8d8d8; /* رنگ پس‌زمینه دکمه‌ها برای وضوح بیشتر */
+                    border: 1px solid #c0c0c0;
+                    padding: 5px 10px;
+                    border-radius: 3px;
+                }
+                QMessageBox QPushButton:hover {
+                    background-color: #c0c0c0; /* رنگ پس‌زمینه دکمه در هاور */
+                }
+            """)
+            msg_box.exec()
+
     def update_background_image(self):
         print("Updating background image size...")
         if self.background_pixmap.isNull() or not self.background_item:
